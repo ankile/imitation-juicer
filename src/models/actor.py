@@ -36,7 +36,6 @@ class DoubleImageActor(torch.nn.Module):
         self.observation_type = config.observation_type
         # This is the number of environments only used for inference, not training
         # Maybe it makes sense to do this another way
-        self.B = config.num_envs
         self.device = device
 
         self.train_noise_scheduler = DDPMScheduler(
@@ -89,16 +88,15 @@ class DoubleImageActor(torch.nn.Module):
         robot_state = torch.cat([o["robot_state"].unsqueeze(1) for o in obs], dim=1)
         nrobot_state = self.normalizer(robot_state, "robot_state", forward=True)
 
+        # Get the batch size as the number of environments
+        B = nrobot_state.shape[0]
+
         # Get size of the image
         img_size = obs[0]["color_image1"].shape[-3:]
 
         # Images come in as obs_horizon x (n_envs, 224, 224, 3) concatenate to (n_envs * obs_horizon, 224, 224, 3)
-        img1 = torch.cat([o["color_image1"].unsqueeze(1) for o in obs], dim=1).reshape(
-            self.B * self.obs_horizon, *img_size
-        )
-        img2 = torch.cat([o["color_image2"].unsqueeze(1) for o in obs], dim=1).reshape(
-            self.B * self.obs_horizon, *img_size
-        )
+        img1 = torch.cat([o["color_image1"].unsqueeze(1) for o in obs], dim=1).reshape(B * self.obs_horizon, *img_size)
+        img2 = torch.cat([o["color_image2"].unsqueeze(1) for o in obs], dim=1).reshape(B * self.obs_horizon, *img_size)
 
         # But first account for images that are not of size 224x224
         if img1.shape[-3:] != (224, 224, 3):
@@ -112,8 +110,8 @@ class DoubleImageActor(torch.nn.Module):
             )
 
         # Encode the images and reshape back to (B, obs_horizon, -1)
-        features1 = self.encoder1(img1).reshape(self.B, self.obs_horizon, -1)
-        features2 = self.encoder2(img2).reshape(self.B, self.obs_horizon, -1)
+        features1 = self.encoder1(img1).reshape(B, self.obs_horizon, -1)
+        features2 = self.encoder2(img2).reshape(B, self.obs_horizon, -1)
 
         if "feature1" in self.normalizer.stats:
             features1 = self.normalizer(features1, "feature1", forward=True)
@@ -130,9 +128,12 @@ class DoubleImageActor(torch.nn.Module):
     def action(self, obs: deque):
         obs_cond = self._normalized_obs(obs)
 
+        # Get the batch size as the number of environments
+        B = obs_cond.shape[0]
+
         # initialize action from Guassian noise
         noisy_action = torch.randn(
-            (self.B, self.pred_horizon, self.action_dim),
+            (B, self.pred_horizon, self.action_dim),
             device=self.device,
         )
         naction = noisy_action

@@ -33,7 +33,7 @@ def main(config: ConfigDict):
         entity="ankile",
         config=config.to_dict(),
         mode="online" if not config.dryrun else "disabled",
-        notes="Test with images produced as 224x224 from sim directly.",
+        notes="Test with images produced as 224x224 from sim directly (continued).",
     )
 
     # Create model save dir
@@ -117,7 +117,7 @@ def main(config: ConfigDict):
 
     testloader = FixedStepsDataloader(
         dataset=test_dataset,
-        n_batches=10,
+        n_batches=config.validation_batches,
         batch_size=config.batch_size,
         num_workers=config.dataloader_workers,
         shuffle=False,
@@ -134,15 +134,6 @@ def main(config: ConfigDict):
     )
 
     n_batches = len(trainloader)
-
-    # lr_scheduler = getattr(torch.optim.lr_scheduler, config.lr_scheduler.name)(
-    #     optimizer=opt_noise,
-    #     max_lr=config.actor_lr,
-    #     epochs=config.num_epochs,
-    #     steps_per_epoch=n_batches,
-    #     pct_start=config.lr_scheduler.warmup_pct,
-    #     anneal_strategy="cos",
-    # )
 
     lr_scheduler = get_scheduler(
         name=config.lr_scheduler.name,
@@ -286,7 +277,7 @@ if __name__ == "__main__":
     config = ConfigDict()
 
     config.action_horizon = 8
-    config.actor_lr = 1e-4
+    config.actor_lr = 5e-5
     config.batch_size = args.batch_size
     config.beta_schedule = "squaredcos_cap_v2"
     config.clip_grad_norm = False
@@ -299,12 +290,13 @@ if __name__ == "__main__":
     config.furniture = "one_leg"
     config.gpu_id = args.gpu_id
     config.inference_steps = 16
-    config.load_checkpoint_path = None
+    config.load_checkpoint_path = "/data/scratch/ankile/furniture-diffusion/models/resilient-cloud-319/actor_39.pt"
     config.mixed_precision = False
     config.num_diffusion_iters = 100
     config.num_envs = num_envs
     config.num_epochs = 200
     config.steps_per_epoch = 200 if args.dryrun is False else 10
+    config.validation_batches = 10
     config.obs_horizon = 2
     config.observation_type = "feature"
     config.augment_image = False
@@ -315,10 +307,10 @@ if __name__ == "__main__":
     config.test_split = 0.1
 
     config.rollout = ConfigDict()
-    config.rollout.every = 1 if args.dryrun is False else 1
+    config.rollout.every = 5 if args.dryrun is False else 1
     config.rollout.loss_threshold = 1 if args.dryrun is False else float("inf")
     config.rollout.max_steps = 750 if args.dryrun is False else 10
-    config.rollout.count = maybe(10, num_envs)
+    config.rollout.count = num_envs
 
     config.lr_scheduler = ConfigDict()
     config.lr_scheduler.name = "cosine"
@@ -334,9 +326,6 @@ if __name__ == "__main__":
 
     assert config.rollout.count % config.num_envs == 0, "n_rollouts must be divisible by num_envs"
 
-    # config.datasim_path = (
-    #     data_base_dir / f"processed/sim/feature_separate/{config.vision_encoder.model}/one_leg/data.zarr"
-    # )
     config.datasim_path = (
         "/data/scratch/ankile/furniture-data/data/processed/sim/feature_separate_small/vip/one_leg/data.zarr"
     )

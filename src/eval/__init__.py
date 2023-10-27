@@ -37,6 +37,7 @@ def rollout(
     rewards = list()
     done = torch.BoolTensor([False] * env.num_envs)
     step_idx = 0
+    sum_reward = 0
 
     with tqdm(
         total=rollout_max_steps,
@@ -70,7 +71,8 @@ def rollout(
                 # update progress bar
                 step_idx += 1
                 pbar.update(1)
-                pbar.set_postfix(reward=reward)
+                sum_reward += reward.sum().item()
+                pbar.set_postfix(reward=sum_reward)
                 if step_idx >= rollout_max_steps:
                     done = torch.BoolTensor([True] * env.num_envs)
 
@@ -92,7 +94,7 @@ def calculate_success_rate(
     rollout_max_steps: int,
     epoch_idx: int,
 ):
-    tbl = wandb.Table(columns=["rollout", "success", "epoch"])
+    tbl = wandb.Table(columns=["rollout", "success", "epoch", "steps_to_success"])
     pbar = trange(
         n_rollouts,
         desc="Performing rollouts",
@@ -137,7 +139,14 @@ def calculate_success_rate(
         video = np.concatenate([video1, video2], axis=2).transpose(0, 3, 1, 2)
         success = (rewards.sum() > 0).item()
 
-        tbl.add_data(wandb.Video(video, fps=10), success, epoch_idx)
+        # Measure how many steps the agent took before it succeeded
+        # or failed
+        if success:
+            success_idx = np.where(rewards > 0)[0][0]
+        else:
+            success_idx = video.shape[0]
+
+        tbl.add_data(wandb.Video(video, fps=10), success, epoch_idx, success_idx)
 
     # Log the videos to wandb table
     wandb.log(
