@@ -34,7 +34,7 @@ def main(config: ConfigDict):
         entity="ankile",
         config=config.to_dict(),
         mode="online" if not config.dryrun else "disabled",
-        notes="Test with images produced as 224x224 from sim directly (continued).",
+        notes="Train an actor with r3m_18 encoder to possibly finetune with image augmentation later.",
     )
 
     # Create model save dir
@@ -273,7 +273,7 @@ if __name__ == "__main__":
     config.furniture = "one_leg"
     config.gpu_id = args.gpu_id
     config.inference_steps = 16
-    config.load_checkpoint_path = "/data/scratch/ankile/furniture-diffusion/models/resilient-cloud-319/actor_39.pt"
+    config.load_checkpoint_path = None
     config.mixed_precision = False
     config.num_diffusion_iters = 100
     config.num_envs = num_envs
@@ -290,7 +290,7 @@ if __name__ == "__main__":
     config.test_split = 0.1
 
     config.rollout = ConfigDict()
-    config.rollout.every = 1 if args.dryrun is False else 1
+    config.rollout.every = 5 if args.dryrun is False else 1
     config.rollout.loss_threshold = 0.015 if args.dryrun is False else float("inf")
     config.rollout.max_steps = 750 if args.dryrun is False else 10
     config.rollout.count = num_envs

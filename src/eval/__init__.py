@@ -9,7 +9,7 @@ from ipdb import set_trace as bp
 from furniture_bench.envs.furniture_sim_env import FurnitureSimEnv
 from src.gym import get_env
 
-from src.models.actor import DoubleImageActor
+from src.behavior.actor import DoubleImageActor
 
 
 import wandb
@@ -74,8 +74,9 @@ def rollout(
 
             # update progress bar
             step_idx += 1
+            sum_reward
             pbar.update(1)
-            pbar.set_postfix(reward=reward)
+            pbar.set_postfix(reward=sum_reward)
             if step_idx >= rollout_max_steps:
                 done = torch.BoolTensor([[True]] * env.num_envs)
 
