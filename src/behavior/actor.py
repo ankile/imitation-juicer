@@ -10,6 +10,7 @@ from src.common.pytorch_util import replace_submodules
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 import torchvision.transforms.functional as F
+from src.behavior.tasks import OneLeg
 
 from ipdb import set_trace as bp
 import numpy as np
@@ -97,19 +98,6 @@ class DoubleImageActor(torch.nn.Module):
         # Images come in as obs_horizon x (n_envs, 224, 224, 3) concatenate to (n_envs * obs_horizon, 224, 224, 3)
         img1 = torch.cat([o["color_image1"].unsqueeze(1) for o in obs], dim=1).reshape(B * self.obs_horizon, *img_size)
         img2 = torch.cat([o["color_image2"].unsqueeze(1) for o in obs], dim=1).reshape(B * self.obs_horizon, *img_size)
-
-        # But first account for images that are not of size 224x224
-        if img1.shape[-3:] != (224, 224, 3):
-            # Resize images to 224x224x3 by first putting channels first
-            # then resizing to 405x228, then center cropping to 224x224
-            img1 = F.center_crop(
-                F.resize(img1.permute(0, 3, 1, 2), (228, 405), antialias=True),
-                (224, 224),
-            ).permute(0, 2, 3, 1)
-            img2 = F.center_crop(
-                F.resize(img2.permute(0, 3, 1, 2), (228, 405), antialias=True),
-                (224, 224),
-            ).permute(0, 2, 3, 1)
 
         # Encode the images and reshape back to (B, obs_horizon, -1)
         features1 = self.encoder1(img1).reshape(B, self.obs_horizon, -1)
@@ -217,6 +205,19 @@ class DoubleImageActor(torch.nn.Module):
 
 
 class SkillImageActor(DoubleImageActor):
+    def __init__(
+        self,
+        device: str | device,
+        encoder_name: str,
+        freeze_encoder: bool,
+        normalizer: StateActionNormalizer,
+        config,
+    ) -> None:
+        super().__init__(device, encoder_name, freeze_encoder, normalizer, config)
+
+        self.task = OneLeg()
+        self.skill_embedding = nn.Embedding(self.task.n_skills, 3)
+
     # === Inference ===
     @torch.no_grad()
     def action(self, obs: deque):
