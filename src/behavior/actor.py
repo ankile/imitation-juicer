@@ -113,11 +113,12 @@ class DoubleImageActor(torch.nn.Module):
 
         return nobs
 
-    # === Inference ===
-    @torch.no_grad()
-    def action(self, obs: deque):
-        obs_cond = self._normalized_obs(obs)
+    def _action(self, obs_cond: torch.Tensor) -> torch.Tensor:
+        """
+        Function to perform the mechanic of the reverse diffusion process to produce a normalized action
 
+        :param obs_cond: (B, obs_horizon * obs_dim)
+        """
         # Get the batch size as the number of environments
         B = obs_cond.shape[0]
 
@@ -141,6 +142,14 @@ class DoubleImageActor(torch.nn.Module):
                 model_output=noise_pred, timestep=k, sample=naction
             ).prev_sample
 
+        return naction
+
+    # === Inference ===
+    @torch.no_grad()
+    def action(self, obs: deque):
+        obs_cond = self._normalized_obs(obs)
+        naction = self._action(obs_cond)
+
         # unnormalize action
         # (B, pred_horizon, action_dim)
         action_pred = self.normalizer(naction, "action", forward=False)
@@ -150,10 +159,28 @@ class DoubleImageActor(torch.nn.Module):
     # === Training ===
     def compute_loss(self, batch):
         nrobot_state = batch["robot_state"]
+
+        obs_cond = self._concatenate_obs(batch, nrobot_state)
+
+        # observation as FiLM conditioning
+        # (B, obs_horizon * obs_dim)
+        obs_cond = obs_cond.flatten(start_dim=1)
+
+        # Action already normalized in the dataset
+        # naction = normalize_data(batch["action"], stats=self.stats["action"])
+        naction = batch["action"]
+        # sample noise to add to actions
+        noise, timesteps, noisy_action = self._noisy_action(B, naction)
+
+        # forward pass
+        noise_pred = self.model(noisy_action, timesteps, global_cond=obs_cond.float())
+        loss = nn.functional.mse_loss(noise_pred, noise)
+
+        return loss
+
+    def _concatenate_obs(self, batch, nrobot_state):
         if self.observation_type == "image":
             # State already normalized in the dataset
-            B = nrobot_state.shape[0]
-
             # Convert images from obs_horizon x (n_envs, 224, 224, 3) -> (n_envs, obs_horizon, 224, 224, 3)
             # so that it's compatible with the encoder
             image1 = batch["color_image1"].reshape(B * self.obs_horizon, 224, 224, 3)
@@ -171,19 +198,11 @@ class DoubleImageActor(torch.nn.Module):
             feature1 = batch["feature1"]
             feature2 = batch["feature2"]
             nobs = torch.cat([nrobot_state, feature1, feature2], dim=-1)
-            B = nobs.shape[0]
+        return nobs
 
-        # observation as FiLM conditioning
-        # (B, obs_horizon, obs_dim)
-        obs_cond = nobs[:, : self.obs_horizon, :]
-        # (B, obs_horizon * obs_dim)
-        obs_cond = obs_cond.flatten(start_dim=1)
-
-        # Action already normalized in the dataset
-        # naction = normalize_data(batch["action"], stats=self.stats["action"])
-        naction = batch["action"]
-        # sample noise to add to actions
+    def _noisy_action(self, naction):
         noise = torch.randn(naction.shape, device=self.device)
+        B = naction.shape[0]
 
         # sample a diffusion iteration for each data point
         timesteps = torch.randint(
@@ -196,18 +215,13 @@ class DoubleImageActor(torch.nn.Module):
         # add noise to the clean images according to the noise magnitude at each diffusion iteration
         # (this is the forward diffusion process)
         noisy_action = self.train_noise_scheduler.add_noise(naction, noise, timesteps)
-
-        # forward pass
-        noise_pred = self.model(noisy_action, timesteps, global_cond=obs_cond.float())
-        loss = nn.functional.mse_loss(noise_pred, noise)
-
-        return loss
+        return noise, timesteps, noisy_action
 
 
 class SkillImageActor(DoubleImageActor):
     def __init__(
         self,
-        device: str | device,
+        device: Union[str, torch.device],
         encoder_name: str,
         freeze_encoder: bool,
         normalizer: StateActionNormalizer,
@@ -222,32 +236,34 @@ class SkillImageActor(DoubleImageActor):
     @torch.no_grad()
     def action(self, obs: deque):
         obs_cond = self._normalized_obs(obs)
-
-        # Get the batch size as the number of environments
-        B = obs_cond.shape[0]
-
-        # initialize action from Guassian noise
-        noisy_action = torch.randn(
-            (B, self.pred_horizon, self.action_dim),
-            device=self.device,
-        )
-        naction = noisy_action
-
-        # init scheduler
-        self.inference_noise_scheduler.set_timesteps(self.inference_steps)
-
-        for k in self.inference_noise_scheduler.timesteps:
-            # predict noise
-            # Print dtypes of all tensors to the model
-            noise_pred = self.model(sample=naction, timestep=k, global_cond=obs_cond)
-
-            # inverse diffusion step (remove noise)
-            naction = self.inference_noise_scheduler.step(
-                model_output=noise_pred, timestep=k, sample=naction
-            ).prev_sample
-
+        naction = self._action(obs_cond)
         # Unnormalize action except the last "done" action
         # (B, pred_horizon, action_dim)
         naction[:, :, :-1] = self.normalizer(naction[:, :, :-1], "action", forward=False)
 
         return naction
+
+    # === Training ===
+    def compute_loss(self, batch):
+        nrobot_state = batch["robot_state"]
+
+        obs_cond = self._concatenate_obs(batch, nrobot_state)
+
+        # observation as FiLM conditioning
+        # (B, obs_horizon * obs_dim)
+        obs_cond = obs_cond.flatten(start_dim=1)
+
+        # Get the skill index and embed it
+        skill_idx = batch["skill_idx"]
+
+        # Action already normalized in the dataset
+        # naction = normalize_data(batch["action"], stats=self.stats["action"])
+        naction = batch["action"]
+        # sample noise to add to actions
+        noise, timesteps, noisy_action = self._noisy_action(B, naction)
+
+        # forward pass
+        noise_pred = self.model(noisy_action, timesteps, global_cond=obs_cond.float())
+        loss = nn.functional.mse_loss(noise_pred, noise)
+
+        return loss
