@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torchvision import transforms
 from functools import partial
-from src.data.normalizer import StateActionNormalizer
+from src.data.normalizer import StateActionNormalizer, StateActionSkillNormalizer
 from src.models.vision import ResnetEncoder, get_encoder
 from src.models.unet import ConditionalUnet1D
 from src.common.pytorch_util import replace_submodules
@@ -35,9 +35,8 @@ class DoubleImageActor(torch.nn.Module):
         self.obs_horizon = config.obs_horizon
         self.inference_steps = config.inference_steps
         self.observation_type = config.observation_type
+        self.robot_state_dim = config.robot_state_dim
         self.down_dims = config.down_dims
-        # This is the number of environments only used for inference, not training
-        # Maybe it makes sense to do this another way
         self.device = device
 
         self.train_noise_scheduler = DDPMScheduler(
@@ -67,10 +66,8 @@ class DoubleImageActor(torch.nn.Module):
         )
 
         self.encoding_dim = self.encoder1.encoding_dim + self.encoder2.encoding_dim
-        self.obs_dim = config.robot_state_dim + self.encoding_dim
+        self.obs_dim = self._obs_dim()
 
-        # TODO:
-        # Fix this so it makes sense to call this from the child class
         self.model = self._create_unet().to(device)
 
         self.print_model_params()
@@ -81,6 +78,9 @@ class DoubleImageActor(torch.nn.Module):
             global_cond_dim=self.obs_dim * self.obs_horizon,
             down_dims=self.down_dims,
         )
+
+    def _obs_dim(self):
+        return self.robot_state_dim + self.encoding_dim
 
     def print_model_params(self: torch.nn.Module):
         total_params = sum(p.numel() for p in self.parameters())
@@ -165,6 +165,7 @@ class DoubleImageActor(torch.nn.Module):
     # === Training ===
     def compute_loss(self, batch):
         obs_cond = self._concatenate_obs(batch)
+        B = obs_cond.shape[0]
 
         # observation as FiLM conditioning
         # (B, obs_horizon * obs_dim)
@@ -184,6 +185,7 @@ class DoubleImageActor(torch.nn.Module):
 
     def _concatenate_obs(self, batch):
         nrobot_state = batch["robot_state"]
+        B = nrobot_state.shape[0]
 
         if self.observation_type == "image":
             # State already normalized in the dataset
@@ -230,13 +232,13 @@ class SkillImageActor(DoubleImageActor):
         device: Union[str, torch.device],
         encoder_name: str,
         freeze_encoder: bool,
-        normalizer: StateActionNormalizer,
+        normalizer: StateActionSkillNormalizer,
         config,
     ) -> None:
         super().__init__(device, encoder_name, freeze_encoder, normalizer, config)
-
+        self.skill_emedding_dim = config.skill_embedding_dim
         self.task = OneLeg()
-        self.skill_embedding = nn.Embedding(self.task.n_skills, 3)
+        self.skill_embedding = nn.Embedding(self.task.n_skills, self.skill_emedding_dim)
 
     def _concatenate_obs(self, batch):
         nobs = super()._concatenate_obs(batch)
@@ -249,14 +251,23 @@ class SkillImageActor(DoubleImageActor):
 
         return nobs
 
+    def _obs_dim(self):
+        # Add the skill embedding to the original observation dimension
+        return super()._obs_dim() + self.skill_emedding_dim
+
     # === Inference ===
     @torch.no_grad()
     def action(self, obs: deque):
         obs_cond = self._normalized_obs(obs)
         naction = self._action(obs_cond)
-        # Unnormalize action except the last "done" action
+        # Unnormalize action and the last "done" action
+        # The done will be a value between 0 and 1 that we interpret as the probability of the skill being done
         # (B, pred_horizon, action_dim)
-        naction[:, :, :-1] = self.normalizer(naction[:, :, :-1], "action", forward=False)
+        naction = self.normalizer(naction, "action", forward=False)
+
+        # # Pass the "done" action through the sigmoid function
+        # # We interpret it as the probability of the skill being done
+        # naction[:, :, -1] = torch.sigmoid(naction[:, :, -1])
 
         return naction
 
@@ -277,6 +288,10 @@ class SkillImageActor(DoubleImageActor):
 
         # forward pass
         noise_pred = self.model(noisy_action, timesteps, global_cond=obs_cond.float())
+
+        # In the loss, we should account for the fact that the last action is a "done" action
+        # As a first attempt, just optimize as the other actions as a value between -1 and 1
+        # and interpret positive values as "done"
         loss = nn.functional.mse_loss(noise_pred, noise)
 
         return loss

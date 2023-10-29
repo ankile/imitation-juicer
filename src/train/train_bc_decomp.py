@@ -9,7 +9,7 @@ from src.data.dataset import (
     FurnitureImageDataset,
     FurnitureFeatureSkillDataset,
 )
-from src.data.normalizer import StateActionNormalizer
+from src.data.normalizer import StateActionSkillNormalizer
 from src.eval import do_rollout_evaluation
 from src.gym import get_env
 from tqdm import tqdm
@@ -41,7 +41,7 @@ def main(config: ConfigDict):
     model_save_dir = Path(config.model_save_dir) / wandb.run.name
     model_save_dir.mkdir(parents=True, exist_ok=True)
 
-    normalizer = StateActionNormalizer()
+    normalizer = StateActionSkillNormalizer()
 
     if config.observation_type == "image":
         raise NotImplementedError("Image observation type not implemented yet")

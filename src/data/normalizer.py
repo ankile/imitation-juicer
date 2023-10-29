@@ -126,3 +126,26 @@ class StateActionNormalizer(nn.Module):
                 stats[key][stat] = self.stats[key][stat].cpu().numpy()
 
         return stats
+
+
+class StateActionSkillNormalizer(StateActionNormalizer):
+    def __init__(self):
+        super().__init__()
+
+        # Add the "done" action stats to the action stats
+        self.stats["action"]["min"] = nn.Parameter(
+            torch.cat(
+                [
+                    self.stats["action"]["min"],
+                    torch.tensor([0.0]),
+                ]
+            )
+        )
+        self.stats["action"]["max"] = nn.Parameter(
+            torch.cat(
+                [
+                    self.stats["action"]["max"],
+                    torch.tensor([1.0]),
+                ]
+            )
+        )
