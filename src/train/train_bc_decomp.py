@@ -304,16 +304,19 @@ if __name__ == "__main__":
     config.lr_scheduler.warmup_steps = 500
 
     config.vision_encoder = ConfigDict()
-    config.vision_encoder.model = "r3m_18"
+    config.vision_encoder.model = "vip"
     config.vision_encoder.freeze = True
     config.vision_encoder.normalize_features = False
+
+    # Skill decomposition-related
+    config.skill_embedding_dim = 3
 
     config.model_save_dir = "models"
 
     assert config.rollout.count % config.num_envs == 0, "n_rollouts must be divisible by num_envs"
 
     config.datasim_path = (
-        "/data/scratch/ankile/furniture-data/data/processed/sim/feature_separate_small/r3m_18/one_leg/data.zarr"
+        "/data/scratch/ankile/furniture-data/data/processed/sim/skill_decomp/feature/one_leg/data.zarr"
     )
 
     print(f"Using data from {config.datasim_path}")

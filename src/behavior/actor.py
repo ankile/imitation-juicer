@@ -235,10 +235,12 @@ class SkillImageActor(DoubleImageActor):
         normalizer: StateActionSkillNormalizer,
         config,
     ) -> None:
-        super().__init__(device, encoder_name, freeze_encoder, normalizer, config)
-        self.skill_emedding_dim = config.skill_embedding_dim
+        # TODO: This needs to be solved in a better way
         self.task = OneLeg()
-        self.skill_embedding = nn.Embedding(self.task.n_skills, self.skill_emedding_dim)
+        self.skill_emedding_dim = config.skill_embedding_dim
+
+        super().__init__(device, encoder_name, freeze_encoder, normalizer, config)
+        self.skill_embedding = nn.Embedding(self.task.n_skills, self.skill_emedding_dim).to(device)
 
     def _concatenate_obs(self, batch):
         nobs = super()._concatenate_obs(batch)

@@ -93,6 +93,9 @@ class StateActionNormalizer(nn.Module):
         )
 
         # Turn off gradients for the stats
+        self.no_grad()
+
+    def no_grad(self):
         for key in self.stats.keys():
             for stat in self.stats[key].keys():
                 self.stats[key][stat].requires_grad = False
@@ -149,3 +152,5 @@ class StateActionSkillNormalizer(StateActionNormalizer):
                 ]
             )
         )
+
+        self.no_grad()

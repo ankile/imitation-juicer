@@ -362,6 +362,6 @@ class FurnitureFeatureSkillDataset(torch.utils.data.Dataset):
         nsample["robot_state"] = nsample["robot_state"][: self.obs_horizon, :]
         nsample["feature1"] = nsample["feature1"][: self.obs_horizon, :]
         nsample["feature2"] = nsample["feature2"][: self.obs_horizon, :]
-        nsample["skill_idx"] = nsample["skill_idx"][: self.obs_horizon, :]
+        nsample["skill_idx"] = nsample["skill_idx"][: self.obs_horizon].astype(np.int32)
 
         return nsample
