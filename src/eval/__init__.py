@@ -208,6 +208,8 @@ def rollout_skill(
     pbar=True,
 ):
     device = env.device
+
+    global noop_skill
     noop_skill = noop_skill.to(device)
     # get first observation
     obs = env.reset()
@@ -282,7 +284,8 @@ def rollout_skill(
             # until the next time we call the forward of the model.
             curr_action[skill_done.nonzero()] = noop_skill
 
-            obs, reward, done, _ = env.step(curr_action)
+            # Step the environment with only the first 8 action elements
+            obs, reward, done, _ = env.step(curr_action[:, :-1])
 
             # Add the current skill idx to the observation
             obs["skill_idx"] = current_skill
