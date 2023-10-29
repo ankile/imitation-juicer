@@ -35,6 +35,7 @@ class DoubleImageActor(torch.nn.Module):
         self.obs_horizon = config.obs_horizon
         self.inference_steps = config.inference_steps
         self.observation_type = config.observation_type
+        self.down_dims = config.down_dims
         # This is the number of environments only used for inference, not training
         # Maybe it makes sense to do this another way
         self.device = device
@@ -68,13 +69,18 @@ class DoubleImageActor(torch.nn.Module):
         self.encoding_dim = self.encoder1.encoding_dim + self.encoder2.encoding_dim
         self.obs_dim = config.robot_state_dim + self.encoding_dim
 
-        self.model = ConditionalUnet1D(
-            input_dim=config.action_dim,
-            global_cond_dim=self.obs_dim * config.obs_horizon,
-            down_dims=config.down_dims,
-        ).to(device)
+        # TODO:
+        # Fix this so it makes sense to call this from the child class
+        self.model = self._create_unet().to(device)
 
         self.print_model_params()
+
+    def _create_unet(self):
+        return ConditionalUnet1D(
+            input_dim=self.action_dim,
+            global_cond_dim=self.obs_dim * self.obs_horizon,
+            down_dims=self.down_dims,
+        )
 
     def print_model_params(self: torch.nn.Module):
         total_params = sum(p.numel() for p in self.parameters())
@@ -158,9 +164,7 @@ class DoubleImageActor(torch.nn.Module):
 
     # === Training ===
     def compute_loss(self, batch):
-        nrobot_state = batch["robot_state"]
-
-        obs_cond = self._concatenate_obs(batch, nrobot_state)
+        obs_cond = self._concatenate_obs(batch)
 
         # observation as FiLM conditioning
         # (B, obs_horizon * obs_dim)
@@ -178,7 +182,9 @@ class DoubleImageActor(torch.nn.Module):
 
         return loss
 
-    def _concatenate_obs(self, batch, nrobot_state):
+    def _concatenate_obs(self, batch):
+        nrobot_state = batch["robot_state"]
+
         if self.observation_type == "image":
             # State already normalized in the dataset
             # Convert images from obs_horizon x (n_envs, 224, 224, 3) -> (n_envs, obs_horizon, 224, 224, 3)
@@ -232,6 +238,17 @@ class SkillImageActor(DoubleImageActor):
         self.task = OneLeg()
         self.skill_embedding = nn.Embedding(self.task.n_skills, 3)
 
+    def _concatenate_obs(self, batch):
+        nobs = super()._concatenate_obs(batch)
+
+        # Get the skill index and embed it
+        skill_embedding = self.skill_embedding(batch["skill_idx"])
+
+        # Concatenate the skill embedding to the observation
+        nobs = torch.cat([nobs, skill_embedding], dim=-1)
+
+        return nobs
+
     # === Inference ===
     @torch.no_grad()
     def action(self, obs: deque):
@@ -245,22 +262,18 @@ class SkillImageActor(DoubleImageActor):
 
     # === Training ===
     def compute_loss(self, batch):
-        nrobot_state = batch["robot_state"]
-
-        obs_cond = self._concatenate_obs(batch, nrobot_state)
+        # This thing contains the robot_state, image features, and skill embedding
+        obs_cond = self._concatenate_obs(batch)
 
         # observation as FiLM conditioning
         # (B, obs_horizon * obs_dim)
         obs_cond = obs_cond.flatten(start_dim=1)
 
-        # Get the skill index and embed it
-        skill_idx = batch["skill_idx"]
-
         # Action already normalized in the dataset
         # naction = normalize_data(batch["action"], stats=self.stats["action"])
         naction = batch["action"]
         # sample noise to add to actions
-        noise, timesteps, noisy_action = self._noisy_action(B, naction)
+        noise, timesteps, noisy_action = self._noisy_action(naction)
 
         # forward pass
         noise_pred = self.model(noisy_action, timesteps, global_cond=obs_cond.float())
