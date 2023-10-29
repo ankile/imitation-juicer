@@ -10,7 +10,7 @@ from src.data.dataset import (
     FurnitureFeatureSkillDataset,
 )
 from src.data.normalizer import StateActionSkillNormalizer
-from src.eval import do_rollout_evaluation
+from src.eval import do_rollout_evaluation_skill
 from src.gym import get_env
 from tqdm import tqdm
 from ipdb import set_trace as bp
@@ -31,7 +31,7 @@ def main(config: ConfigDict):
     # Init wandb
     wandb.init(
         project="skill-decomposition-test",
-        entity="robot-rearrengement",
+        entity="robot-rearrangement",
         config=config.to_dict(),
         mode="online" if not config.dryrun else "disabled",
         notes="Experimenting with skill decomposition",
@@ -227,7 +227,7 @@ def main(config: ConfigDict):
             and (epoch_idx + 1) % config.rollout.every == 0
             and np.mean(epoch_loss) < config.rollout.loss_threshold
         ):
-            # Do no load the environment until we successfuly made it this far
+            # Do not load the environment until we successfuly made it this far
             if env is None:
                 env = get_env(
                     config.gpu_id,
@@ -237,7 +237,9 @@ def main(config: ConfigDict):
                     randomness=config.randomness,
                     resize_img=not config.augment_image,
                 )
-            best_success_rate = do_rollout_evaluation(config, env, model_save_dir, actor, best_success_rate, epoch_idx)
+            best_success_rate = do_rollout_evaluation_skill(
+                config, env, model_save_dir, actor, best_success_rate, epoch_idx
+            )
 
     tglobal.close()
     wandb.finish()

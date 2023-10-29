@@ -1,9 +1,22 @@
 import furniture_bench
 from furniture_bench.envs.observation import DEFAULT_STATE_OBS, DEFAULT_VISUAL_OBS
 
+import torch
+
 import gym
 
 from src.common.context import suppress_print, suppress_all_output
+
+# Define a noop tensor to use when done
+# It is zero everywhere except for the first element of the rotation
+# as the quaternion noop is (1, 0, 0, 0)
+# The elements are: (x, y, z) + (a, b, c, d) + (w,)
+noop = torch.tensor([0, 0, 0, 1, 0, 0, 0, 0], dtype=torch.float32)
+
+# The noop skill is the noop tensor concatenated with a 1
+# The last action is the "done" action, and it's set to 1 because the state of being
+# done is a state where it makes sense to take no action
+noop_skill = torch.cat([noop, torch.tensor([1.0], dtype=torch.float32)])
 
 
 def get_env(

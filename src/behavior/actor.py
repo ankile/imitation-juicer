@@ -113,9 +113,8 @@ class DoubleImageActor(torch.nn.Module):
             features1 = self.normalizer(features1, "feature1", forward=True)
             features2 = self.normalizer(features2, "feature2", forward=True)
 
-        # Reshape concatenate the features
+        # Concatenate the features
         nobs = torch.cat([nrobot_state, features1, features2], dim=-1)
-        nobs = nobs.flatten(start_dim=1)
 
         return nobs
 
@@ -153,7 +152,8 @@ class DoubleImageActor(torch.nn.Module):
     # === Inference ===
     @torch.no_grad()
     def action(self, obs: deque):
-        obs_cond = self._normalized_obs(obs)
+        nobs = self._normalized_obs(obs)
+        obs_cond = nobs.flatten(start_dim=1)
         naction = self._action(obs_cond)
 
         # unnormalize action
@@ -255,10 +255,22 @@ class SkillImageActor(DoubleImageActor):
         # Add the skill embedding to the original observation dimension
         return super()._obs_dim() + self.skill_emedding_dim
 
+    def _normalized_obs(self, obs: deque):
+        nobs = super()._normalized_obs(obs)
+
+        # Get the skill index and embed it
+        skill_embedding = self.skill_embedding(torch.tensor([o["skill_idx"] for o in obs], device=self.device))
+
+        # Concatenate the skill embedding to the observation
+        nobs = torch.cat([nobs, skill_embedding], dim=-1)
+
+        return nobs
+
     # === Inference ===
     @torch.no_grad()
     def action(self, obs: deque):
-        obs_cond = self._normalized_obs(obs)
+        nobs = self._normalized_obs(obs)
+        obs_cond = nobs.flatten(start_dim=1)
         naction = self._action(obs_cond)
         # Unnormalize action and the last "done" action
         # The done will be a value between 0 and 1 that we interpret as the probability of the skill being done
@@ -274,11 +286,11 @@ class SkillImageActor(DoubleImageActor):
     # === Training ===
     def compute_loss(self, batch):
         # This thing contains the robot_state, image features, and skill embedding
-        obs_cond = self._concatenate_obs(batch)
+        nobs = self._concatenate_obs(batch)
 
         # observation as FiLM conditioning
         # (B, obs_horizon * obs_dim)
-        obs_cond = obs_cond.flatten(start_dim=1)
+        obs_cond = nobs.flatten(start_dim=1)
 
         # Action already normalized in the dataset
         # naction = normalize_data(batch["action"], stats=self.stats["action"])
