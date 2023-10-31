@@ -33,7 +33,7 @@ def main(config: ConfigDict):
         project="skill-decomposition-test",
         entity="robot-rearrangement",
         config=config.to_dict(),
-        mode="online" if not config.dryrun else "disabled",
+        mode=config.wb_mode if not config.dryrun else "disabled",
         notes="Run skill decomp with bigger scale",
     )
 
@@ -261,6 +261,7 @@ if __name__ == "__main__":
     num_envs = 16
 
     config = ConfigDict()
+    config.wb_mode = args.wb_mode
 
     config.action_horizon = 8
     config.actor_lr = 1e-4
@@ -292,7 +293,7 @@ if __name__ == "__main__":
     config.test_split = 0.1
 
     config.rollout = ConfigDict()
-    config.rollout.every = 5 if args.dryrun is False else 1
+    config.rollout.every = 1 if args.dryrun is False else 1
     # config.rollout.loss_threshold = 1 if args.dryrun is False else float("inf")
     config.rollout.loss_threshold = 0.1 if args.dryrun is False else float("inf")
     config.rollout.max_steps = 750 if args.dryrun is False else 10

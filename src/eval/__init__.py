@@ -280,7 +280,7 @@ def rollout_skill(
             # Only increment skills that got done this round, i.e. the ones
             # where `done_action > 0.5` and `not skill_done`
             done_pred = done_action > 0.5
-            current_skill[(done_pred & ~skill_done & (current_skill < skill.n_skills)).nonzero()] += 1
+            current_skill[(done_pred & ~skill_done & (current_skill < (skill.n_skills - 1))).nonzero()] += 1
             # current_skill = torch.clamp(current_skill, max=skill.n_skills - 1)
 
             # Also make sure that actions that are predicted done stays done.

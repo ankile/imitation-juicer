@@ -264,6 +264,8 @@ class SkillImageActor(DoubleImageActor):
         # o["skill_idx"] is (n_envs, 1) -> (n_envs, obs_horizon)
         skill_idx = torch.cat([o["skill_idx"] for o in obs], dim=1)
 
+        print(skill_idx)
+
         # Get the skill index and embed it, (n_envs, obs_horizon, skill_embedding_dim)
         skill_embedding = self.skill_embedding(skill_idx)
 
