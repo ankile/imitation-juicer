@@ -260,9 +260,12 @@ class SkillImageActor(DoubleImageActor):
     def _normalized_obs(self, obs: deque):
         nobs = super()._normalized_obs(obs)
 
-        # Get the skill index and embed it
-        skill_embedding = self.skill_embedding(torch.cat([o["skill_idx"] for o in obs], dim=1))
-        # skill_embedding = self.skill_embedding(torch.tensor([o["skill_idx"] for o in obs], device=self.device))
+        # Concatenate the skill embedding and make into right shpe
+        # o["skill_idx"] is (n_envs, 1) -> (n_envs, obs_horizon)
+        skill_idx = torch.cat([o["skill_idx"] for o in obs], dim=1)
+
+        # Get the skill index and embed it, (n_envs, obs_horizon, skill_embedding_dim)
+        skill_embedding = self.skill_embedding(skill_idx)
 
         # Concatenate the skill embedding to the observation
         nobs = torch.cat([nobs, skill_embedding], dim=-1)

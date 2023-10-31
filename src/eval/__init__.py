@@ -14,6 +14,8 @@ from src.gym import noop, noop_skill
 from src.behavior.actor import DoubleImageActor, SkillImageActor
 from src.behavior.tasks import tasks
 
+import cv2
+
 
 import wandb
 
@@ -209,8 +211,8 @@ def rollout_skill(
 ):
     device = env.device
 
-    global noop_skill
-    noop_skill = noop_skill.to(device)
+    global noop
+    noop = noop.to(device)
     # get first observation
     obs = env.reset()
 
@@ -263,32 +265,37 @@ def rollout_skill(
 
         # Initialize `skill_done` to be a tensor of zeros
         # with the same shape as the done tensor
-        skill_done = torch.zeros_like(done)
+        skill_done = torch.zeros_like(done, dtype=torch.bool, device=device)
 
         # execute action_horizon number of steps
         # without replanning
         for i in range(action.shape[1]):
             # stepping env
             curr_action = action[:, i, :].clone()
-            curr_action[done.nonzero()] = noop_skill
+            env_action, done_action = curr_action[:, :-1], curr_action[:, -1:]
+            env_action[done.nonzero()] = noop
 
             # Based on the "done" action, update the current skill index
             # for each environment (and clamp it to the max skill index).
+            # Only increment skills that got done this round, i.e. the ones
+            # where `done_action > 0.5` and `not skill_done`
+            done_pred = done_action > 0.5
+            current_skill[(done_pred & ~skill_done & (current_skill != skill.n_skills)).nonzero()] += 1
+            # current_skill = torch.clamp(current_skill, max=skill.n_skills - 1)
+
             # Also make sure that actions that are predicted done stays done.
-            skill_done = (curr_action[:, -1] > 0.5) | skill_done
-            current_skill[skill_done.nonzero()] += 1
-            current_skill = torch.clamp(current_skill, max=skill.n_skills - 1)
+            skill_done = done_pred | skill_done
 
             # For the environments where the agent is done with the current skill,
             # we also set the noop action and the agent will continue to take no-ops
             # until the next time we call the forward of the model.
-            curr_action[skill_done.nonzero()] = noop_skill
+            env_action[skill_done.nonzero()] = noop
 
             # Step the environment with only the first 8 action elements
-            obs, reward, done, _ = env.step(curr_action[:, :-1])
+            obs, reward, done, _ = env.step(env_action)
 
             # Add the current skill idx to the observation
-            obs["skill_idx"] = current_skill
+            obs["skill_idx"] = current_skill.clone()
 
             # save observations
             obs_deque.append(obs)
@@ -301,16 +308,23 @@ def rollout_skill(
 
             # update progress bar
             step_idx += 1
-            sum_reward
+            sum_reward += reward.sum().item()
             pbar.update(1)
             pbar.set_postfix(reward=sum_reward)
 
             # If we have reached the max rollout steps
             # This still works because the envs that are predicted done do nothing
             if step_idx >= rollout_max_steps:
-                done = torch.BoolTensor([[True]] * env.num_envs)
+                done = torch.ones((env.num_envs, 1), dtype=torch.bool, device=device)
 
-            if done.all():
+            # If all skills are at the final skill index and predicted done,
+            # we can break out of the loop and stop the rollout
+            if (current_skill == skill.n_skills - 1).all() and skill_done.all():
+                done = torch.ones((env.num_envs, 1), dtype=torch.bool, device=device)
+
+            # If all environments are done, we can break out of the loop which also breaks the while loop
+            # If all skills are done, we can also break out of the loop but not the outer while loop
+            if done.all() or skill_done.all():
                 break
 
     return (
@@ -330,7 +344,7 @@ def annotate_video(imgs, skill_idx, skill_names):
     color = (255, 0, 0)
     thickness = 2
 
-    for i, (img, idx) in enumerate(zip(imgs, skill_idx)):
+    for i, (img, idx) in enumerate(zip(imgs, skill_idx.flatten())):
         img = cv2.putText(img, skill_names[idx], org, font, fontScale, color, thickness, cv2.LINE_AA)
         imgs[i] = img
 
@@ -390,12 +404,14 @@ def calculate_success_rate_skill(
         skills = all_skills[rollout_idx].numpy()
 
         # Stack the two videoes side by side into a single video
-        # and swap the axes from (T, H, W, C) to (T, C, H, W)
-        video = np.concatenate([video1, video2], axis=2).transpose(0, 3, 1, 2)
+        video = np.concatenate([video1, video2], axis=2)
         success = (rewards.sum() > 0).item()
 
         # Annotate the video with the skill names
         video = annotate_video(video, skills, skill_names)
+
+        # Swap the axes from (T, H, W, C) to (T, C, H, W) before passing to wandb
+        video = video.transpose(0, 3, 1, 2)
 
         # Measure how many steps the agent took before it succeeded
         # or failed

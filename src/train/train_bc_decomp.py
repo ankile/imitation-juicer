@@ -34,7 +34,7 @@ def main(config: ConfigDict):
         entity="robot-rearrangement",
         config=config.to_dict(),
         mode="online" if not config.dryrun else "disabled",
-        notes="Experimenting with skill decomposition",
+        notes="Experimenting with skill decomposition, fixed CUDA issues",
     )
 
     # Create model save dir
@@ -258,7 +258,7 @@ if __name__ == "__main__":
     maybe = lambda x, fb=1: x if args.dryrun is False else fb
 
     n_workers = min(args.cpus, os.cpu_count())
-    num_envs = 16
+    num_envs = 1
 
     config = ConfigDict()
 
@@ -281,7 +281,7 @@ if __name__ == "__main__":
     config.num_diffusion_iters = 100
     config.num_envs = num_envs
     config.num_epochs = 200
-    config.steps_per_epoch = 200 if args.dryrun is False else 10
+    config.steps_per_epoch = 200 if args.dryrun is False else 1
     config.validation_batches = 10
     config.obs_horizon = 2
     config.observation_type = "feature"
@@ -293,8 +293,9 @@ if __name__ == "__main__":
     config.test_split = 0.1
 
     config.rollout = ConfigDict()
-    config.rollout.every = 5 if args.dryrun is False else 1
-    config.rollout.loss_threshold = 0.015 if args.dryrun is False else float("inf")
+    config.rollout.every = 1 if args.dryrun is False else 1
+    config.rollout.loss_threshold = 1 if args.dryrun is False else float("inf")
+    # config.rollout.loss_threshold = 0.015 if args.dryrun is False else float("inf")
     config.rollout.max_steps = 750 if args.dryrun is False else 10
     config.rollout.count = num_envs
 
