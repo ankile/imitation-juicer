@@ -1,49 +1,30 @@
-import argparse
 import os
 from pathlib import Path
-
 import numpy as np
 import torch
-import torch.distributed as dist
-import torch.multiprocessing as mp
+import wandb
 from diffusers.optimization import get_scheduler
+from src.dataset.dataset import (
+    FurnitureImageDataset,
+    FurnitureFeatureDataset,
+)
+from src.dataset.normalizer import StateActionNormalizer
+from tqdm import tqdm
 from ipdb import set_trace as bp
-from ml_collections import ConfigDict
-
 from src.behavior.diffusion_policy import DiffusionPolicy
 from src.behavior.mlp import MLPActor
-from src.common.earlystop import EarlyStopper
-from src.common.pytorch_util import dict_apply
 from src.dataset.dataloader import FixedStepsDataloader
-from src.dataset.dataset import FurnitureFeatureDataset, FurnitureImageDataset
-from src.dataset.normalizer import StateActionNormalizer
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, random_split
-from torch.utils.data.distributed import DistributedSampler
+from src.common.pytorch_util import dict_apply
+import argparse
+from torch.utils.data import random_split, DataLoader
+from src.common.earlystop import EarlyStopper
 
-from tqdm import tqdm
+from torch.nn import DataParallel
 
-import wandb
-
-
-def setup(rank, world_size):
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12355"
-
-    # initialize the process group
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+from ml_collections import ConfigDict
 
 
-def cleanup():
-    dist.destroy_process_group()
-
-
-def main(rank, config: ConfigDict, world_size):
-    print(f"Running on rank {rank} of {world_size}")
-    setup(rank, world_size)
-
-    device = torch.device(f"cuda:{rank}")
-
+def main(config: ConfigDict):
     if config.observation_type == "image":
         dataset = FurnitureImageDataset(
             dataset_path=config.datasim_path,
@@ -72,14 +53,6 @@ def main(rank, config: ConfigDict, world_size):
     print(f"Splitting dataset into {train_size} train and {test_size} test samples.")
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 
-    # Update dataset samplers for distributed training
-    train_sampler = DistributedSampler(
-        train_dataset, num_replicas=world_size, rank=rank
-    )
-    test_sampler = DistributedSampler(
-        test_dataset, num_replicas=world_size, rank=rank, shuffle=False
-    )
-
     # Update the config object with the action dimension
     config.action_dim = dataset.action_dim
     config.robot_state_dim = dataset.robot_state_dim
@@ -87,7 +60,7 @@ def main(rank, config: ConfigDict, world_size):
     # Create the policy network
     if config.actor == "mlp":
         actor = MLPActor(
-            device=device,
+            device="cpu",
             encoder_name=config.vision_encoder.model,
             freeze_encoder=config.vision_encoder.freeze,
             normalizer=StateActionNormalizer(),
@@ -95,7 +68,7 @@ def main(rank, config: ConfigDict, world_size):
         )
     elif config.actor == "diffusion":
         actor = DiffusionPolicy(
-            device=device,
+            device="cpu",
             encoder_name=config.vision_encoder.model,
             freeze_encoder=config.vision_encoder.freeze,
             normalizer=StateActionNormalizer(),
@@ -107,7 +80,7 @@ def main(rank, config: ConfigDict, world_size):
     # Update the config object with the observation dimension
     config.timestep_obs_dim = actor.timestep_obs_dim
 
-    actor = DDP(actor, device_ids=[rank])
+    actor = DataParallel(actor, device_ids=[0, 1])
 
     if config.load_checkpoint_path is not None:
         print(f"Loading checkpoint from {config.load_checkpoint_path}")
@@ -119,10 +92,10 @@ def main(rank, config: ConfigDict, world_size):
         n_batches=config.steps_per_epoch,
         batch_size=config.batch_size,
         num_workers=config.dataloader_workers,
-        shuffle=False,
+        shuffle=True,
         pin_memory=True,
-        drop_last=True,
-        sampler=train_sampler,
+        drop_last=False,
+        persistent_workers=True,
     )
 
     testloader = DataLoader(
@@ -133,7 +106,6 @@ def main(rank, config: ConfigDict, world_size):
         pin_memory=True,
         drop_last=False,
         persistent_workers=True,
-        sampler=test_sampler,
     )
 
     # AdamW optimizer for noise_net
@@ -153,7 +125,6 @@ def main(rank, config: ConfigDict, world_size):
     )
 
     tglobal = tqdm(range(config.num_epochs), desc="Epoch")
-    best_success_rate = float("-inf")
 
     early_stopper = EarlyStopper(
         patience=config.early_stopper.patience,
@@ -161,53 +132,46 @@ def main(rank, config: ConfigDict, world_size):
     )
 
     # Init wandb
-    if rank == 0:
-        wandb.init(
-            project="image-training",
-            entity="robot-rearrangement",
-            config=config.to_dict(),
-            mode="online" if not config.dryrun else "disabled",
-            notes="Try a fix to the dataset.",
-        )
+    wandb.init(
+        project="image-training",
+        entity="robot-rearrangement",
+        config=config.to_dict(),
+        mode="online" if not config.dryrun else "disabled",
+        notes="Try a fix to the dataset.",
+    )
 
-        # save stats to wandb and update the config object
-        wandb.log(
-            {
-                "num_samples": len(train_dataset),
-                "num_samples_test": len(test_dataset),
-                "num_episodes": int(
-                    len(dataset.episode_ends) * (1 - config.test_split)
-                ),
-                "num_episodes_test": int(len(dataset.episode_ends) * config.test_split),
-                "stats": StateActionNormalizer().stats_dict,
-            }
-        )
-        wandb.config.update(config.to_dict())
+    # save stats to wandb and update the config object
+    wandb.log(
+        {
+            "num_samples": len(train_dataset),
+            "num_samples_test": len(test_dataset),
+            "num_episodes": int(len(dataset.episode_ends) * (1 - config.test_split)),
+            "num_episodes_test": int(len(dataset.episode_ends) * config.test_split),
+            "stats": StateActionNormalizer().stats_dict,
+        }
+    )
+    wandb.config.update(config.to_dict())
 
-        # Create model save dir
-        model_save_dir = Path(config.model_save_dir) / wandb.run.name
-        model_save_dir.mkdir(parents=True, exist_ok=True)
+    # Create model save dir
+    model_save_dir = Path(config.model_save_dir) / wandb.run.name
+    model_save_dir.mkdir(parents=True, exist_ok=True)
 
     # Train loop
-    test_loss_mean = 0.0
+    best_test_loss = float("inf")
+    test_loss_mean = float("inf")
+    best_success_rate = 0
+
     for epoch_idx in tglobal:
         epoch_loss = list()
         test_loss = list()
 
-        # Update samplers
-        train_sampler.set_epoch(epoch_idx)
-        test_sampler.set_epoch(epoch_idx)
-
         # batch loop
-        # Initialize tqdm only on the main process
-        if rank == 0:
-            tepoch = tqdm(trainloader, desc="Training", leave=False, total=n_batches)
-
+        tepoch = tqdm(trainloader, desc="Training", leave=False, total=n_batches)
         for batch in tepoch:
             opt_noise.zero_grad()
 
             # device transfer
-            batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
+            # batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
 
             # Get loss
             loss = actor.compute_loss(batch)
@@ -215,51 +179,47 @@ def main(rank, config: ConfigDict, world_size):
             # backward pass
             loss.backward()
 
+            # Gradient clipping
+            if config.clip_grad_norm:
+                torch.nn.utils.clip_grad_norm_(
+                    actor.parameters(), max_norm=config.clip_grad_norm
+                )
+
             # optimizer step
             opt_noise.step()
             lr_scheduler.step()
 
-            # Aggregate and average loss across processes
-            loss_cpu = loss.item()
-            reduced_loss = torch.tensor(loss_cpu).to(device)
-            dist.all_reduce(reduced_loss, op=dist.ReduceOp.SUM)
-            reduced_loss = reduced_loss.item() / world_size
-
             # logging
-            if rank == 0:
-                lr = lr_scheduler.get_last_lr()[0]
-                tepoch.set_postfix(loss=loss_cpu, lr=lr)
-                wandb.log(
-                    dict(
-                        lr=lr,
-                        batch_loss=loss_cpu,
-                    )
-                )
-
+            loss_cpu = loss.item()
             epoch_loss.append(loss_cpu)
+            lr = lr_scheduler.get_last_lr()[0]
+            wandb.log(
+                dict(
+                    lr=lr,
+                    batch_loss=loss_cpu,
+                )
+            )
 
-        if rank == 0:
-            tepoch.close()
+            tepoch.set_postfix(loss=loss_cpu, lr=lr)
+
+        tepoch.close()
 
         train_loss_mean = np.mean(epoch_loss)
-
-        # Set global post-fix and logging only on the main process
-        if rank == 0:
-            tglobal.set_postfix(
-                loss=train_loss_mean,
-                test_loss=test_loss_mean,
-                best_success_rate=best_success_rate,
-            )
-            wandb.log({"epoch_loss": train_loss_mean, "epoch": epoch_idx})
+        tglobal.set_postfix(
+            loss=train_loss_mean,
+            test_loss=test_loss_mean,
+            best_success_rate=best_success_rate,
+        )
+        wandb.log({"epoch_loss": np.mean(epoch_loss), "epoch": epoch_idx})
 
         # Evaluation loop
         test_tepoch = tqdm(testloader, desc="Validation", leave=False)
         for test_batch in test_tepoch:
             with torch.no_grad():
                 # device transfer for test_batch
-                test_batch = dict_apply(
-                    test_batch, lambda x: x.to(device, non_blocking=True)
-                )
+                # test_batch = dict_apply(
+                #     test_batch, lambda x: x.to(device, non_blocking=True)
+                # )
 
                 # Get test loss
                 test_loss_val = actor.compute_loss(test_batch)
@@ -280,6 +240,16 @@ def main(rank, config: ConfigDict, world_size):
 
         wandb.log({"test_epoch_loss": test_loss_mean, "epoch": epoch_idx})
 
+        # Save the model if the test loss is the best so far
+        if test_loss_mean < best_test_loss:
+            best_test_loss = test_loss_mean
+            save_path = str(model_save_dir / f"actor_chkpt_best.pt")
+            torch.save(
+                actor.state_dict(),
+                save_path,
+            )
+            wandb.save(save_path)
+
         # Early stopping
         if early_stopper.update(test_loss_mean):
             print(
@@ -296,25 +266,8 @@ def main(rank, config: ConfigDict, world_size):
             }
         )
 
-        if (
-            config.rollout.every != -1
-            and (epoch_idx + 1) % config.rollout.every == 0
-            and np.mean(epoch_loss) < config.rollout.loss_threshold
-        ):
-            # Checkpoint the model
-            if config.checkpoint_model:
-                save_path = str(model_save_dir / f"actor_chkpt_latest.pt")
-                torch.save(
-                    actor.state_dict(),
-                    save_path,
-                )
-                wandb.save(save_path)
-
     tglobal.close()
     wandb.finish()
-
-    # Close the distributed process group
-    cleanup()
 
 
 def get_data_path(obs_type, encoder):
@@ -328,7 +281,6 @@ def get_data_path(obs_type, encoder):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--gpu-id", "-g", type=int, default=0)
     parser.add_argument("--batch-size", "-b", type=int, default=64)
     parser.add_argument("--dryrun", "-d", action="store_true")
     parser.add_argument("--cpus", "-c", type=int, default=24)
@@ -343,6 +295,7 @@ if __name__ == "__main__":
     dryrun = lambda x, fb=1: x if args.dryrun is False else fb
 
     n_workers = min(args.cpus, os.cpu_count())
+    num_envs = dryrun(8, fb=2)
 
     config = ConfigDict()
 
@@ -373,16 +326,22 @@ if __name__ == "__main__":
     config.demo_source = "sim"
     config.dryrun = args.dryrun
     config.furniture = "one_leg"
-    # config.gpu_id = args.gpu_id
     config.load_checkpoint_path = None
     # config.load_checkpoint_path = "/data/scratch/ankile/furniture-diffusion/models/stellar-river-37/actor_chkpt_latest.pt"
     config.mixed_precision = False
+    config.num_envs = num_envs
     config.num_epochs = 200
     config.obs_horizon = 2
     config.observation_type = args.obs_type
     config.randomness = "low"
     config.steps_per_epoch = dryrun(400, fb=10)
     config.test_split = 0.05
+
+    config.rollout = ConfigDict()
+    config.rollout.every = dryrun(5, fb=1)
+    config.rollout.loss_threshold = dryrun(0.05, fb=float("inf"))
+    config.rollout.max_steps = dryrun(600, fb=100)
+    config.rollout.count = num_envs * 1
 
     config.lr_scheduler = ConfigDict()
     config.lr_scheduler.name = "cosine"
@@ -409,6 +368,10 @@ if __name__ == "__main__":
     config.model_save_dir = "models"
     config.checkpoint_model = True
 
+    assert (
+        config.rollout.count % config.num_envs == 0
+    ), "n_rollouts must be divisible by num_envs"
+
     # config.datasim_path = (
     #     config.data_base_dir
     #     / "processed/sim"
@@ -418,5 +381,4 @@ if __name__ == "__main__":
 
     print(f"Using data from {config.datasim_path}")
 
-    world_size = torch.cuda.device_count()
-    torch.multiprocessing.spawn(main, args=(config, world_size), nprocs=world_size)
+    main(config)
