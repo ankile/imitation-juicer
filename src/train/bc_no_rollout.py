@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import torch
 import wandb
+
 # from wandb_osh.hooks import TriggerWandbSyncHook
 
 from diffusers.optimization import get_scheduler
@@ -221,6 +222,7 @@ def main(config: DictConfig):
     best_test_loss = float("inf")
     test_loss_mean = float("inf")
     best_success_rate = 0
+
 
     tglobal = trange(
         config.training.start_epoch,

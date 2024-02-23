@@ -1,0 +1,32 @@
+# @package _global_
+defaults:
+  - override /vision_encoder: resnet
+
+# Override the values for observation type, layernorm, and augmentation
+observation_type: image
+
+pred_horizon: 32
+obs_horizon: 1
+randomness: low
+
+data:
+  data_subset: 10
+  augment_image: true
+  dataloader_workers: 1
+
+training:
+  batch_size: 64
+  num_epochs: 1
+  steps_per_epoch: 64
+
+regularization:
+  feature_layernorm: false
+  feature_noise: false
+  feature_dropout: false
+
+control:
+  control_mode: pos
+
+
+wandb:
+  mode: disabled
