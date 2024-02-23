@@ -123,27 +123,31 @@ class DiffusionPolicy(Actor):
 
     # === Inference ===
     def _normalized_action(self, nobs: torch.Tensor) -> torch.Tensor:
-        from sklearn.neighbors import KernelDensity
-        from scipy.signal import argrelextrema
-        import numpy as np
-
-        n_samples = 500
 
         # The `nobs` are already flattened and normalized
         # Shape: (n_envs, obs_horizon * obs_dim)
         B = nobs.shape[0]
 
-        # We'll add another dimension after the environment dimension
-        # Shape: (n_envs, 1, obs_horizon * obs_dim)
-        nobs = nobs.unsqueeze(1)
+        use_mode = True
 
-        # We repeat along the new dimension for n_samples
-        # Shape: (n_envs, n_samples, obs_horizon * obs_dim)
-        nobs = nobs.repeat(1, n_samples, 1)
+        if use_mode:
+            from sklearn.neighbors import KernelDensity
+            from scipy.signal import argrelextrema
+            import numpy as np
 
-        # Now we flatten the nobs the n_envs and n_samples dimensions
-        # Shape: (n_envs * n_samples, obs_horizon * obs_dim)
-        nobs = nobs.view(-1, self.obs_horizon * self.obs_dim)
+            n_samples = 500
+
+            # We'll add another dimension after the environment dimension
+            # Shape: (n_envs, 1, obs_horizon * obs_dim)
+            nobs = nobs.unsqueeze(1)
+
+            # We repeat along the new dimension for n_samples
+            # Shape: (n_envs, n_samples, obs_horizon * obs_dim)
+            nobs = nobs.repeat(1, n_samples, 1)
+
+            # Now we flatten the nobs the n_envs and n_samples dimensions
+            # Shape: (n_envs * n_samples, obs_horizon * obs_dim)
+            nobs = nobs.view(-1, self.obs_horizon * self.obs_dim)
 
         # Important! `nobs` needs to be normalized and flattened before passing to this function
         # Initialize action from Guassian noise
@@ -164,41 +168,46 @@ class DiffusionPolicy(Actor):
                 model_output=noise_pred, timestep=k, sample=naction
             ).prev_sample
 
-        # Reshape the action to the original shape
-        # Shape: (n_envs, n_samples, pred_horizon, action_dim)
-        naction = naction.view(B, n_samples, self.pred_horizon, self.action_dim).cpu()
+        if use_mode:
+            # Reshape the action to the original shape
+            # Shape: (n_envs, n_samples, pred_horizon, action_dim)
+            naction = naction.view(
+                B, n_samples, self.pred_horizon, self.action_dim
+            ).cpu()
 
-        # Cut of all actions after action_horizon
-        # Shape: (n_envs, n_samples, action_horizon, action_dim)
-        naction = naction[:, :, : self.action_horizon, :]
+            # Cut of all actions after action_horizon
+            # Shape: (n_envs, n_samples, action_horizon, action_dim)
+            naction = naction[:, :, : self.action_horizon, :]
 
-        # Make the resulting action tensor contiguous
-        out_naction = torch.empty(
-            (B, self.action_horizon, self.action_dim), device=self.device
-        )
-
-        # Now, for each of the n_envs, we'll find the empirical mode of the n_samples
-        # Shape: (n_envs, pred_horizon, action_dim)
-        for env_idx in range(B):
-            action = naction[env_idx]
-            f_action = action.reshape(
-                (n_samples, self.action_horizon * self.action_dim)
-            ).numpy()
-
-            # Assuming actions_np is the NumPy array representation of your data
-            kde = KernelDensity(kernel="gaussian", bandwidth=0.5).fit(f_action)
-            scores = kde.score_samples(f_action)
-
-            # Find local maxima
-            maxima_indices = argrelextrema(scores, np.greater)[0]
-            modes = f_action[maxima_indices]
-
-            mode_action = torch.from_numpy(
-                modes[0].reshape((self.action_horizon, self.action_dim))
+            # Make the resulting action tensor contiguous
+            out_naction = torch.empty(
+                (B, self.action_horizon, self.action_dim), device=self.device
             )
 
-            # Set the mode action to the first action in the queue
-            out_naction[env_idx] = mode_action.to(self.device)
+            # Now, for each of the n_envs, we'll find the empirical mode of the n_samples
+            # Shape: (n_envs, pred_horizon, action_dim)
+            for env_idx in range(B):
+                action = naction[env_idx]
+                f_action = action.reshape(
+                    (n_samples, self.action_horizon * self.action_dim)
+                ).numpy()
+
+                # Assuming actions_np is the NumPy array representation of your data
+                kde = KernelDensity(kernel="gaussian", bandwidth=0.5).fit(f_action)
+                scores = kde.score_samples(f_action)
+
+                # Find local maxima
+                maxima_indices = argrelextrema(scores, np.greater)[0]
+                modes = f_action[maxima_indices]
+
+                mode_action = torch.from_numpy(
+                    modes[0].reshape((self.action_horizon, self.action_dim))
+                )
+
+                # Set the mode action to the first action in the queue
+                out_naction[env_idx] = mode_action.to(self.device)
+        else:
+            out_naction = naction
 
         return out_naction
 
