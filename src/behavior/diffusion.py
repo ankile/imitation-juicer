@@ -114,16 +114,41 @@ class DiffusionPolicy(Actor):
             actor_config=actor_cfg,
         ).to(device)
 
+        print(
+            "NBNB: Surgical change to _normalized_action to allow sampling of the action mode"
+        )
+
         loss_fn_name = actor_cfg.loss_fn if hasattr(actor_cfg, "loss_fn") else "MSELoss"
         self.loss_fn = getattr(nn, loss_fn_name)()
 
     # === Inference ===
-    def _normalized_action(self, nobs):
+    def _normalized_action(self, nobs: torch.Tensor) -> torch.Tensor:
+        from sklearn.neighbors import KernelDensity
+        from scipy.signal import argrelextrema
+        import numpy as np
+
+        n_samples = 500
+
+        # The `nobs` are already flattened and normalized
+        # Shape: (n_envs, obs_horizon * obs_dim)
         B = nobs.shape[0]
+
+        # We'll add another dimension after the environment dimension
+        # Shape: (n_envs, 1, obs_horizon * obs_dim)
+        nobs = nobs.unsqueeze(1)
+
+        # We repeat along the new dimension for n_samples
+        # Shape: (n_envs, n_samples, obs_horizon * obs_dim)
+        nobs = nobs.repeat(1, n_samples, 1)
+
+        # Now we flatten the nobs the n_envs and n_samples dimensions
+        # Shape: (n_envs * n_samples, obs_horizon * obs_dim)
+        nobs = nobs.view(-1, self.obs_horizon * self.obs_dim)
+
         # Important! `nobs` needs to be normalized and flattened before passing to this function
         # Initialize action from Guassian noise
         naction = torch.randn(
-            (B, self.pred_horizon, self.action_dim),
+            (nobs.shape[0], self.pred_horizon, self.action_dim),
             device=self.device,
         )
 
@@ -139,7 +164,43 @@ class DiffusionPolicy(Actor):
                 model_output=noise_pred, timestep=k, sample=naction
             ).prev_sample
 
-        return naction
+        # Reshape the action to the original shape
+        # Shape: (n_envs, n_samples, pred_horizon, action_dim)
+        naction = naction.view(B, n_samples, self.pred_horizon, self.action_dim).cpu()
+
+        # Cut of all actions after action_horizon
+        # Shape: (n_envs, n_samples, action_horizon, action_dim)
+        naction = naction[:, :, : self.action_horizon, :]
+
+        # Make the resulting action tensor contiguous
+        out_naction = torch.empty(
+            (B, self.action_horizon, self.action_dim), device=self.device
+        )
+
+        # Now, for each of the n_envs, we'll find the empirical mode of the n_samples
+        # Shape: (n_envs, pred_horizon, action_dim)
+        for env_idx in range(B):
+            action = naction[env_idx]
+            f_action = action.reshape(
+                (n_samples, self.action_horizon * self.action_dim)
+            ).numpy()
+
+            # Assuming actions_np is the NumPy array representation of your data
+            kde = KernelDensity(kernel="gaussian", bandwidth=0.5).fit(f_action)
+            scores = kde.score_samples(f_action)
+
+            # Find local maxima
+            maxima_indices = argrelextrema(scores, np.greater)[0]
+            modes = f_action[maxima_indices]
+
+            mode_action = torch.from_numpy(
+                modes[0].reshape((self.action_horizon, self.action_dim))
+            )
+
+            # Set the mode action to the first action in the queue
+            out_naction[env_idx] = mode_action.to(self.device)
+
+        return out_naction
 
     def _sample_action_pred(self, nobs):
         # Predict normalized action
@@ -300,6 +361,11 @@ class SuccessGuidedDiffusionPolicy(DiffusionPolicy):
         self.prob_blank_cond = actor_cfg.prob_blank_cond
         self.success_cond_emb_dim = actor_cfg.success_cond_emb_dim
 
+        self.formulation_version = actor_cfg.formulation_version
+        print(
+            f"Using SuccessGuidedDiffusionPolicy with formulation version {self.formulation_version} and guidance scale {self.guidance_scale}"
+        )
+
         self.success_embedding = nn.Embedding(
             num_embeddings=2,
             embedding_dim=self.success_cond_emb_dim,
@@ -392,9 +458,23 @@ class SuccessGuidedDiffusionPolicy(DiffusionPolicy):
             ).view(3, B, self.pred_horizon, self.action_dim)
 
             # Calculate the final noise prediction
-            noise_pred = noise_pred_pos - self.guidance_scale * (
-                noise_pred_neg - noise_pred_blank
-            )
+            if self.formulation_version == 0:
+                noise_pred = noise_pred_pos
+            elif self.formulation_version == 1:
+                noise_pred = noise_pred_pos - self.guidance_scale * (
+                    noise_pred_neg - noise_pred_blank
+                )
+            elif self.formulation_version == 2:
+                noise_pred = noise_pred_pos - self.guidance_scale * (
+                    noise_pred_neg - noise_pred_pos
+                )
+            elif self.formulation_version == 3:
+                # Suggested by Copilot—use with caution
+                noise_pred = (
+                    noise_pred_pos
+                    - self.guidance_scale * noise_pred_neg
+                    + self.guidance_scale * noise_pred_blank
+                )
 
             # inverse diffusion step (remove noise)
             naction = self.inference_noise_scheduler.step(

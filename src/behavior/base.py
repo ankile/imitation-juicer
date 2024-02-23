@@ -130,6 +130,9 @@ class Actor(torch.nn.Module, metaclass=PostInitCaller):
 
         return nobs
 
+    def _normalized_action(self, nobs: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
+
     def regularize_features(
         self, feature1: torch.Tensor, feature2: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:

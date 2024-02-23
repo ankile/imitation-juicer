@@ -280,7 +280,12 @@ if __name__ == "__main__":
                     {
                         **run.config,
                         "project_name": run.project,
-                        "actor": {**run.config["actor"], "inference_steps": 4},
+                        "actor": {
+                            **run.config["actor"],
+                            "inference_steps": 8,
+                            "guidance_scale": 0.5,
+                            "formulation_version": 3,
+                        },
                     },
                     flags={"readonly": True},
                 )
@@ -346,7 +351,8 @@ if __name__ == "__main__":
                     actor=actor,
                     env=env,
                     n_rollouts=args.n_rollouts,
-                    rollout_max_steps=rollout_max_steps,
+                    # rollout_max_steps=rollout_max_steps,
+                    rollout_max_steps=1_000,
                     epoch_idx=0,
                     gamma=config.discount,
                     rollout_save_dir=save_dir,
