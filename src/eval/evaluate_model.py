@@ -173,6 +173,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-rollouts", type=int, default=None)
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--max-rollout-steps", type=int, default=None)
+    parser.add_argument("--no-april-tags", action="store_true")
     # Parse the arguments
     args = parser.parse_args()
 
@@ -279,6 +280,7 @@ if __name__ == "__main__":
                         act_rot_repr="rot_6d",
                         ctrl_mode="osc",
                         action_type=args.action_type,
+                        april_tags=not args.no_april_tags,
                         verbose=args.verbose,
                         headless=not args.visualize,
                     )
