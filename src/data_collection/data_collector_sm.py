@@ -163,7 +163,7 @@ class DataCollectorSpaceMouse:
         self.starttime = datetime.now()
 
         # Variable controlling if we're currently in recording mode
-        self.recording = False
+        self.recording = True
 
         # our flags
         self.right_multiply_rot = right_multiply_rot
