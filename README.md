@@ -73,7 +73,7 @@ Now, you can install the IsaacGym package by navigating to the `isaacgym` direct
 pip install -e python --no-cache-dir --force-reinstall
 ```
 
-_Note: The `--no-cache-dir` and `--force-reinstall` flags are used to avoid potential issues with the installation that we encountered._
+_Note: The `--no-cache-dir` and `--force-reinstall` flags are used to avoid potential issues with the installation we encountered._
 
 _Note: Please ignore Pip's notice that `[notice] To update, run: pip install --upgrade pip` as the current version of Pip is necessary for compatibility with the codebase._
 
@@ -107,7 +107,7 @@ python -m furniture_bench.scripts.run_sim_env --furniture one_leg --scripted
 
 This should open a window with the simulated environment and the robot in it.
 
-If you encounter the error `ImportError: libpython3.8.so.1.0: cannot open shared object file: No such file or directory` this might be remedied by adding the conda environment's library path to the `LD_LIBRARY_PATH` environment variable. This can be done by, e.g., running:
+If you encounter the error `ImportError: libpython3.8.so.1.0: cannot open shared object file: No such file or directory`, this might be remedied by adding the conda environment's library path to the `LD_LIBRARY_PATH` environment variable. This can be done by, e.g., running:
 
 ```bash
 export LD_LIBRARY_PATH=YOUR_CONDA_PATH/envs/YOUR_CONDA_ENV_NAME/lib
@@ -199,8 +199,10 @@ and command line arguments are available in
 demonstrations for the `one_leg` task is:
 
 ```bash
-python -m src.data_collection.teleop --furniture one_leg --pkl-only --num-demos 10 --randomness low [--save-failure --no-ee-laser]
+python -m src.data_collection.teleop --furniture one_leg --num-demos 10 --randomness low
 ```
+
+Optionally you can add the flag `--save-failure` to also store failed trajectories and the flag `--no-ee-laser` will remove the red laser from the end-effector from the viewer (it's not rendered in the camera views either way).
 
 Demonstrations are saved as `.pkl` files at:
 ```bash
@@ -235,8 +237,10 @@ After annotation, use `src/data_collection/backward_augment.py` to
 generate counterfactual snippets. Example command:
 
 ```bash
-python -m src.data_collection.backward_augment --furniture one_leg --randomness low --demo-source teleop [--no-filter-pickles]
+python -m src.data_collection.backward_augment --furniture one_leg --randomness low --demo-source teleop
 ```
+
+Optionally, adding the flag `--no-filter-pickles` will skip the step that filters out only trajectories that have been annotated, which speeds up the process in cases where all trajectories in the directory have been annotated.
 
 New demonstrations are stored at:
 
@@ -263,11 +267,10 @@ For a debug run, add `dryrun=true`. For rollouts during training, add
 Evaluate trained models with `src/eval/evaluate_model.py`. For example:
 
 ```bash
-python -m src.eval.evaluate_model --run-id entity/project/run-id --furniture one_leg --n-envs 10 --n-rollouts 10 --randomness low [--save-rollouts --wandb --if-exists append --run-state finished]
+python -m src.eval.evaluate_model --run-id entity/project/run-id --furniture one_leg --n-envs 10 --n-rollouts 10 --randomness low
 ```
 
-To save rollout results, use `--save-rollouts`. For WandB logging, add
-`--wandb`.
+Optionally, adding the flag `--save-rollouts` will store the rollout trajectories to the raw data directory and adding `--wandb` will write the success rate numbers back to the WandB run. If using the `--wandb` option, you can optionally filter out only finished runs to evaluate with `--run-state finished` and decide how to deal with runs that have already been evaluated with, e.g., `--if-exists append` (other options are `overwrite` and `skip`).
 
 
 
@@ -277,11 +280,13 @@ To save rollout results, use `--save-rollouts`. For WandB logging, add
 If you find the paper or the code useful, please consider citing the paper:
 
 ```tex      
-@article{ankile2024juicer,
-    author    = {Ankile, Lars and Simeonov, Anthony and Shenfeld, Idan and Agrawal, Pulkit},
-    title     = {JUICER: Data-Efficient Imitation Learning for Robotic Assembly},
-    journal   = {arXiv},
-    year      = {2024},
+@misc{ankile2024juicer,
+      title={JUICER: Data-Efficient Imitation Learning for Robotic Assembly}, 
+      author={Lars Ankile and Anthony Simeonov and Idan Shenfeld and Pulkit Agrawal},
+      year={2024},
+      eprint={2404.03729},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO}
 }
 ```
 
