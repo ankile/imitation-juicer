@@ -94,7 +94,7 @@ sentry-sdk==1.40.5
 setproctitle==1.3.3
 six==1.16.0
 smmap==5.0.1
-# -e git+ssh://git@github.com/ankile/furniture-diffusion.git@20f872cd513ffc02b435f5f227b66b05e4e579a4#egg=src
+spnav==0.9
 stack-data==0.6.3
 sympy==1.12
 tabulate==0.9.0

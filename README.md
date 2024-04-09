@@ -124,7 +124,17 @@ pip install -e .
 
 ### Data Collection: Install the SpaceMouse Driver
 
-TODO: Write this up.
+To make data collection with the SpaceMouse possible, you need to install the SpaceMouse driver: 
+
+```bash
+sudo apt install libspnav-dev spacenavd
+```
+
+Then, the SpaceMouse driver needs to run in the background. To start the driver, run:
+
+```bash
+sudo systemctl start spacenavd
+```
 
 
 ### Install Additional Dependencies
